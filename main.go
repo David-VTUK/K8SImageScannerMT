@@ -31,9 +31,8 @@ func main() {
 		panic(err.Error())
 	}
 
-	config.QPS = 1.0
-	config.Burst = 1
-
+	config.Burst = 50
+	config.QPS = 20
 	/*
 		NewForConfig creates a new Clientset for the given config.
 		If config's RateLimiter is not set and QPS and Burst are acceptable,
@@ -45,18 +44,19 @@ func main() {
 		panic(err.Error())
 	}
 
-	listOfNamespaces = []string{"default", "cattle-system", "nginx-system"}
+	listOfNamespaces = getNamespaces(clientset)
 
 	wg.Add(len(listOfNamespaces))
-
-	fmt.Println("adding", len(listOfNamespaces))
+	//sem := make(chan struct{}, 100)
 
 	for _, namespace := range listOfNamespaces {
-		n := namespace
-		go func() {
+		//n := namespace
+		go func(n string) {
 			getPodsPerNamespace(n, clientset)
+			//sem <- struct{}{}
+			//	defer func() { <-sem }()
 			wg.Done()
-		}()
+		}(namespace)
 	}
 	wg.Wait()
 }
@@ -99,7 +99,6 @@ func getNamespaces(c *kubernetes.Clientset) []string {
 
 func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset) {
 
-	fmt.Println(namespace)
 	pods, err := clientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 
 	if err != nil {
@@ -109,7 +108,7 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset) {
 	for _, pod := range pods.Items {
 		for _, container := range pod.Spec.Containers {
 			if strings.Contains(container.Image, "latest") == true || strings.Contains(container.Image, ":") == false {
-				fmt.Println("Found!")
+				fmt.Println("Name:", container.Name, "Image:", container.Image)
 			}
 		}
 	}
