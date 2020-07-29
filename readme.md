@@ -7,4 +7,4 @@ This application reads a kubeconfig file in ~/.kube/config and iterates through 
 * `:latest` 
 * `default` 
 
-![alt text](./images/app.gif)
+![Animated image showcasing app](./images/app.gif)
