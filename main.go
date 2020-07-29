@@ -4,11 +4,11 @@ import (
 	"context"
 	"flag"
 	"os"
-	"path/filepath"
+	"path"
 	"strings"
 	"sync"
 
-	"github.com/jedib0t/go-pretty/table"
+	"github.com/jedib0t/go-pretty/v6/table"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -19,49 +19,57 @@ type identifiedWorkload struct {
 }
 
 // Channel buffer size
-const maxChannelItems = 2000
+const (
+	defaultKubeconfig = "~/.kube/config"
+	maxChannelItems   = 2000
+	burst             = 50
+	qps               = 25
+)
 
 func main() {
-
-	var listOfNamespaces []string
-	var listOfWorkloads []identifiedWorkload
-
-	// Retrieve responses from threaded calls
-	messages := make(chan identifiedWorkload, maxChannelItems)
-
-	// Put all threads in a waitgroup so the channel can be closed once all threads have finished
-	var wg sync.WaitGroup
-
-	//Grab the kubeconfig
-	kubeconfig := getConfig()
-
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	kubeconfig, err := getConfig()
 	if err != nil {
-		panic(err.Error())
+		handleError(err)
+	}
+
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		handleError(err)
 	}
 
 	// Increase the Burst and QOS values
-	config.Burst = 50
-	config.QPS = 25
+	config.Burst = burst
+	config.QPS = qps
 
 	// Build client from  config
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		handleError(err)
 	}
 
+	ctx := context.Background()
 	// Grab the list of namespaces in the current context
-	listOfNamespaces = getNamespaces(clientset)
+	listOfNamespaces, err := getNamespaces(ctx, clientset)
+	if err != nil {
+		handleError(err)
+	}
 
+	// Put all threads in a waitgroup so the channel can be closed once all threads have finished
+	var wg sync.WaitGroup
 	// Match the number of waitgroups to the number of namespaces.
 	// as each call to getPodsPerNamespace() will be in its own goroutine
 	wg.Add(len(listOfNamespaces))
+
+	// Retrieve responses from threaded calls
+	messages := make(chan identifiedWorkload, maxChannelItems)
 
 	//Iterate through the namespaces
 	for _, namespace := range listOfNamespaces {
 		//For each namespace, inspect the pods that reside it within a dedicated goroutine
 		go func(n string) {
-			getPodsPerNamespace(n, clientset, messages)
+			if err := getPodsPerNamespace(ctx, n, clientset, messages); err != nil {
+				handleError(err)
+			}
 			defer wg.Done()
 		}(namespace)
 	}
@@ -71,6 +79,7 @@ func main() {
 	// As this uses a buffered channel, we need to explicitly close
 	close(messages)
 
+	var listOfWorkloads []identifiedWorkload
 	for element := range messages {
 		listOfWorkloads = append(listOfWorkloads, element)
 	}
@@ -78,47 +87,63 @@ func main() {
 	displayWorkloads(listOfWorkloads)
 }
 
-func getConfig() *string {
-	var kubeconfig *string
-
-	if home := homeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-	return kubeconfig
+func handleError(err error) {
+	panic(err.Error())
 }
 
-func homeDir() string {
-	if h := os.Getenv("HOME"); h != "" {
-		return h
+func getConfig() (string, error) {
+	var filename string
+	var err error
+	kubeconfigFlag := flag.String("kubeconfig", "", "path to the kubeconfig file")
+	flag.Parse()
+
+	filename = *kubeconfigFlag
+	if filename == "" {
+		filename = defaultKubeconfig
 	}
-	return os.Getenv("USERPROFILE") // windows
+	filename, err = homeDir(filename)
+	if err != nil {
+		return "", err
+	}
+	if _, err := os.Stat(filename); err != nil {
+		return "", err
+	}
+
+	return filename, nil
+}
+
+func homeDir(filename string) (string, error) {
+	if strings.Contains(filename, "~/") {
+		homedir, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		filename = strings.Replace(filename, "~/", "", 1)
+		filename = path.Join(homedir, filename)
+	}
+	return filename, nil
 }
 
 // Return the list of namespaces in the cluster
-func getNamespaces(c *kubernetes.Clientset) []string {
-	namespaces, err := c.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
+func getNamespaces(ctx context.Context, c *kubernetes.Clientset) ([]string, error) {
 	var listOfNamespaces []string
-
+	namespaces, err := c.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return listOfNamespaces, err
 	}
 
 	for _, namespace := range namespaces.Items {
 		listOfNamespaces = append(listOfNamespaces, namespace.Name)
 	}
-	return listOfNamespaces
+	return listOfNamespaces, nil
 }
 
 // Iterate through Namespace -> Pod -> Container and identify container images
 // using either :latest or no tag
-func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c chan identifiedWorkload) {
-	pods, err := clientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
-
+func getPodsPerNamespace(ctx context.Context, namespace string, clientSet *kubernetes.Clientset, c chan identifiedWorkload) error {
+	pods, err := clientSet.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return err
 	}
 
 	for _, pod := range pods.Items {
@@ -134,6 +159,8 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c ch
 			}
 		}
 	}
+
+	return nil
 }
 
 //Display the results
