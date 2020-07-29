@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -54,9 +53,11 @@ func main() {
 	// Grab the list of namespaces in the current context
 	listOfNamespaces = getNamespaces(clientset)
 
-	//
+	// Match the number of waitgroups to the number of namespaces.
+	// as each call to getPodsPerNamespace() will be in its own goroutine
 	wg.Add(len(listOfNamespaces))
 
+	//Iterate through the namespaces
 	for _, namespace := range listOfNamespaces {
 		go func(n string) {
 			getPodsPerNamespace(n, clientset, messages)
@@ -64,12 +65,16 @@ func main() {
 		}(namespace)
 	}
 	wg.Wait()
+
+	// As this uses a buffered channel, we need to explicitly close
 	close(messages)
 
+	// Grab the items from the channel
 	for element := range messages {
 		listOfWorkloads = append(listOfWorkloads, element)
 	}
 
+	//Display the Workloads
 	displayWorkloads(listOfWorkloads)
 }
 
@@ -92,10 +97,9 @@ func homeDir() string {
 	return os.Getenv("USERPROFILE") // windows
 }
 
+// Return the list of namespaces in the cluster
 func getNamespaces(c *kubernetes.Clientset) []string {
 	namespaces, err := c.CoreV1().Namespaces().List(context.TODO(), metav1.ListOptions{})
-
-	//context := context
 	var listOfNamespaces []string
 
 	if err != nil {
@@ -104,13 +108,13 @@ func getNamespaces(c *kubernetes.Clientset) []string {
 
 	for _, namespace := range namespaces.Items {
 		listOfNamespaces = append(listOfNamespaces, namespace.Name)
-		fmt.Println("Adding namespace", namespace.Name)
 	}
 	return listOfNamespaces
 }
 
+// Iterate through Namespace -> Pod -> Container and identify container images
+// using either :latest or no tag
 func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c chan identifiedWorkload) {
-	fmt.Println("Getting pods in namespace", namespace)
 	pods, err := clientSet.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{})
 
 	if err != nil {
@@ -118,9 +122,7 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c ch
 	}
 
 	for _, pod := range pods.Items {
-		fmt.Println("Getting pod", pod.Name)
 		for _, container := range pod.Spec.Containers {
-			fmt.Println("Getting container", container.Name)
 			if strings.Contains(container.Image, "latest") == true || strings.Contains(container.Image, ":") == false {
 				cont := identifiedWorkload{
 					containerName: container.Name,
@@ -133,6 +135,7 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c ch
 	}
 }
 
+//Display the results
 func displayWorkloads(w []identifiedWorkload) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
@@ -145,6 +148,7 @@ func displayWorkloads(w []identifiedWorkload) {
 		t.AppendSeparator()
 	}
 	t.SetStyle(table.StyleLight)
+
 	//render table
 	t.Render()
 }
