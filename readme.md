@@ -7,6 +7,6 @@ This application reads a kubeconfig file in ~/.kube/config and iterates through 
 * `:latest` 
 * `default` 
 
-In the corresponding container image tag
+In the corresponding container image tag. It does so leveraging multiple `goroutines` 
 
 ![Animated image showcasing app](./images/app.gif)
