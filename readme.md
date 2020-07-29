@@ -1,4 +1,4 @@
-# K8s Image Scanner
+# Multi Threaded K8s Image Scanner
 
 ## About
 
