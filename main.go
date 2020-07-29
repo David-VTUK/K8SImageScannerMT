@@ -8,18 +8,18 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/jedib0t/go-pretty/table"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/jedib0t/go-pretty/table"
 )
 
 type identifiedWorkload struct {
-	containerName, namespace, image string
+	containerName, namespace, image, pod string
 }
 
-const maxChannelElements = 2000
+// Channel buffer size
+const maxChannelItems = 2000
 
 func main() {
 
@@ -27,7 +27,7 @@ func main() {
 	var listOfWorkloads []identifiedWorkload
 
 	// Retrieve responses from threaded calls
-	messages := make(chan identifiedWorkload, maxChannelElements)
+	messages := make(chan identifiedWorkload, maxChannelItems)
 
 	// Put all threads in a waitgroup so the channel can be closed once all threads have finished
 	var wg sync.WaitGroup
@@ -59,22 +59,22 @@ func main() {
 
 	//Iterate through the namespaces
 	for _, namespace := range listOfNamespaces {
+		//For each namespace, inspect the pods that reside it within a dedicated goroutine
 		go func(n string) {
 			getPodsPerNamespace(n, clientset, messages)
 			defer wg.Done()
 		}(namespace)
 	}
+	// Wait for all goroutines to finish
 	wg.Wait()
 
 	// As this uses a buffered channel, we need to explicitly close
 	close(messages)
 
-	// Grab the items from the channel
 	for element := range messages {
 		listOfWorkloads = append(listOfWorkloads, element)
 	}
 
-	//Display the Workloads
 	displayWorkloads(listOfWorkloads)
 }
 
@@ -128,6 +128,7 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c ch
 					containerName: container.Name,
 					namespace:     namespace,
 					image:         container.Image,
+					pod:           pod.Name,
 				}
 				c <- cont
 			}
@@ -139,11 +140,11 @@ func getPodsPerNamespace(namespace string, clientSet *kubernetes.Clientset, c ch
 func displayWorkloads(w []identifiedWorkload) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
-	t.AppendHeader(table.Row{"Namespace", "Container", "Image"})
+	t.AppendHeader(table.Row{"Namespace", "Pod", "Container", "Image"})
 
 	for _, container := range w {
 		t.AppendRow(table.Row{
-			container.namespace, container.containerName, container.image,
+			container.namespace, container.pod, container.containerName, container.image,
 		})
 		t.AppendSeparator()
 	}
