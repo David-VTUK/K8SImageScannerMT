@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 
@@ -17,6 +18,13 @@ import (
 type identifiedWorkload struct {
 	containerName, namespace, image, pod string
 }
+
+// byNamespace implements sort.Interface based on the namespace field.
+type byNamespace []identifiedWorkload
+
+func (n byNamespace) Len() int           { return len(n) }
+func (n byNamespace) Less(i, j int) bool { return n[i].namespace < n[j].namespace }
+func (n byNamespace) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
 
 // Channel buffer size
 const (
@@ -93,6 +101,7 @@ func main() {
 		listOfWorkloads = append(listOfWorkloads, element)
 	}
 
+	sort.Sort(byNamespace(listOfWorkloads))
 	displayWorkloads(listOfWorkloads)
 }
 
