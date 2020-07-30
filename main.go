@@ -21,7 +21,6 @@ type identifiedWorkload struct {
 // Channel buffer size
 const (
 	defaultKubeconfig = "~/.kube/config"
-	maxChannelItems   = 2000
 	burst             = 50
 	qps               = 25
 )
@@ -48,6 +47,16 @@ func main() {
 	}
 
 	ctx := context.Background()
+
+	// Get the list of containers
+	numberOfContainers, err := getTotalNumberOfContainers(ctx, clientset)
+	if err != nil {
+		handleError(err)
+	}
+
+	// Add a buffer of 10% - in case extra containers are spun whilst this app finishes
+	numberOfContainers += (numberOfContainers / 10)
+
 	// Grab the list of namespaces in the current context
 	listOfNamespaces, err := getNamespaces(ctx, clientset)
 	if err != nil {
@@ -61,7 +70,7 @@ func main() {
 	wg.Add(len(listOfNamespaces))
 
 	// Retrieve responses from threaded calls
-	messages := make(chan identifiedWorkload, maxChannelItems)
+	messages := make(chan identifiedWorkload, numberOfContainers)
 
 	//Iterate through the namespaces
 	for _, namespace := range listOfNamespaces {
@@ -179,4 +188,19 @@ func displayWorkloads(w []identifiedWorkload) {
 
 	//render table
 	t.Render()
+}
+
+//Get the list of pods in the cluster. This will determine the buffer size of the channel
+func getTotalNumberOfContainers(ctx context.Context, clientSet *kubernetes.Clientset) (int, error) {
+
+	numberofcontainers := 0
+	pods, err := clientSet.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return 0, err
+	}
+
+	for _, pod := range pods.Items {
+		numberofcontainers += len(pod.Spec.Containers)
+	}
+	return numberofcontainers, nil
 }
