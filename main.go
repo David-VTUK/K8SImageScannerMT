@@ -110,20 +110,40 @@ func handleError(err error) {
 }
 
 func getConfig() (string, error) {
+	// Declare variables
 	var filename string
 	var err error
-	kubeconfigFlag := flag.String("kubeconfig", "", "path to the kubeconfig file")
+
+	// Check KUBECONFIG environment variable
+	envKubeConfig := os.Getenv("KUBECONFIG")
+	if envKubeConfig != "" {
+		filename, err = homeDir(envKubeConfig)
+		if err != nil {
+			return "", err
+		}
+		if _, err = os.Stat(filename); err != nil {
+			return "", err
+		}
+		return filename, nil
+	}
+
+	// Setup and parse the kubeconfig command-line flag
+	flag.StringVar(&filename, "kubeconfig", "", "path to the kubeconfig file")
 	flag.Parse()
 
-	filename = *kubeconfigFlag
+	// Use default kubeconfig if no flag is set
 	if filename == "" {
 		filename = defaultKubeconfig
 	}
+
+	// Resolve home directory in path
 	filename, err = homeDir(filename)
 	if err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(filename); err != nil {
+
+	// Check if the resolved file path exists
+	if _, err = os.Stat(filename); err != nil {
 		return "", err
 	}
 
@@ -181,7 +201,7 @@ func getPodsPerNamespace(ctx context.Context, namespace string, clientSet *kuber
 	return nil
 }
 
-//Display the results
+// Display the results
 func displayWorkloads(w []identifiedWorkload) {
 	t := table.NewWriter()
 	t.SetOutputMirror(os.Stdout)
@@ -199,7 +219,7 @@ func displayWorkloads(w []identifiedWorkload) {
 	t.Render()
 }
 
-//Get the list of pods in the cluster. This will determine the buffer size of the channel
+// Get the list of pods in the cluster. This will determine the buffer size of the channel
 func getTotalNumberOfContainers(ctx context.Context, clientSet *kubernetes.Clientset) (int, error) {
 
 	numberofcontainers := 0
